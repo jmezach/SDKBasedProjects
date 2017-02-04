@@ -20,7 +20,7 @@ function CopyProjectReferences($project, $originalProject) {
     $projectReferences = $originalProject.Project.ItemGroup.ProjectReference | Where-Object { $_.Include -ne $null}
     $itemGroup = $project.CreateElement("ItemGroup")
     $project.Project.AppendChild($itemGroup) | Out-Null
-    Write-Verbose "Found $($projectReferences.Length) project references to copy"
+    Write-Verbose "Found $($projectReferences.Count) project references to copy"
     foreach ($projectReference in $projectReferences){
         $projectReferenceElement = $project.CreateElement("ProjectReference")
         $projectReferenceElement.SetAttribute("Include", $projectReference.Include)
@@ -29,30 +29,54 @@ function CopyProjectReferences($project, $originalProject) {
 }
 
 function CopyAssemblyReferences($project, $originalProject) {
-    $assemblyReferences = $originalProject.Project.ItemGroup.Reference | Where-Object { $_.HintPath -ne $null -and $_.HintPath -notlike "..\packages*" }
+    $assemblyReferences = $originalProject.Project.ItemGroup.Reference | Where-Object {
+        ($_.HintPath -ne $null -and
+         $_.HintPath -notlike "..\packages*") -or
+        ($_.HintPath -eq $null -and
+         $_.Include -notlike "System*")
+    }
     $itemGroup = $project.CreateElement("ItemGroup")
     $project.Project.AppendChild($itemGroup) | Out-Null
-    Write-Verbose "Found $($assemblyReferences.Length) assembly references to copy"
+    Write-Verbose "Found $($assemblyReferences.Count) assembly references to copy"
     foreach ($assemblyReference in $assemblyReferences) {
+        if ($assemblyReference.Include -eq $null) {
+            continue
+        }
+        
         $assemblyReferenceElement = $project.CreateElement("Reference")
         $assemblyReferenceElement.SetAttribute("Include", $assemblyReference.Include)
-        $hintPathElement = $project.CreateElement("HintPath")
-        $hintPathElement.InnerText = $assemblyReference.HintPath
-        $assemblyReferenceElement.AppendChild($hintPathElement) | Out-Null
+        if ($assemblyReference.HintPath -ne $null) {
+            $hintPathElement = $project.CreateElement("HintPath")
+            $hintPathElement.InnerText = $assemblyReference.HintPath
+            $assemblyReferenceElement.AppendChild($hintPathElement) | Out-Null
+        }
+
         $itemGroup.AppendChild($assemblyReferenceElement) | Out-Null
     }
 }
 
-function MapTargetFramework($targetFrameworkVersion, $targetFrameworkIdentifier) {
+function SetTargetFramework($project, $originalProject) {
+    $targetFrameworkVersion = $originalProject.Project.PropertyGroup.TargetFrameworkVersion | Select-Object -First 1
+    $targetFrameworkIdentifier = $originalProject.Project.PropertyGroup.TargetFrameworkIdentifier
     Write-Verbose "Found target framework version $targetFrameworkVersion"
     if ($targetFrameworkVersion -eq "v4.5.2" -and $targetFrameworkIdentifier -eq $null) {
-        return "net452"
+        $project.Project.PropertyGroup.TargetFramework = "net452"
+        return
     } elseif ($targetFrameworkVersion -eq "v5.0" -and $targetFrameworkIdentifier -eq "Silverlight") {
-        return "sl50"
+        $project.Project.PropertyGroup.TargetFramework = "sl50"
+        $propertyGroup = $project.CreateElement("PropertyGroup");
+        $propertyGroup.SetAttribute("Condition", '''$(TargetFramework)'' == ''sl50''')
+        $targetFrameworkIdentifierElement = $project.CreateElement("TargetFrameworkIdentifier")
+        $targetFrameworkIdentifierElement.InnerText = $targetFrameworkIdentifier
+        $targetFrameworkVersionElement = $project.CreateElement("TargetFrameworkVersion")
+        $targetFrameworkVersionElement.InnerText = $targetFrameworkVersion
+        $propertyGroup.AppendChild($targetFrameworkIdentifierElement) | Out-Null
+        $propertyGroup.AppendChild($targetFrameworkVersionElement) | Out-Null
+        $project.Project.AppendChild($propertyGroup) | Out-Null
+        return
     }
 
     Write-Warning "Unknown target framework version $targetFrameworkVersion"
-    return "netstandard1.4"
 }
 
 # Make sure the target folder exists
@@ -93,7 +117,7 @@ foreach ($projectToMigrate in $projectsToMigrate) {
 
     # Load the project file for further manipulation
     $project = [xml](Get-Content $projectPath -Encoding UTF8)
-    $project.Project.PropertyGroup.TargetFramework = MapTargetFramework $originalProject.Project.PropertyGroup.TargetFrameworkVersion $originalProject.Project.PropertyGroup.TargetFrameworkIdentifier
+    SetTargetframework $project $originalProject
 
     # Copy over package references from packages.config
     $packagesConfigPath = Join-Path $projectFolder "packages.config"
