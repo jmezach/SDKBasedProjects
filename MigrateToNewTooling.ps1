@@ -32,8 +32,7 @@ function CopyAssemblyReferences($project, $originalProject) {
     $assemblyReferences = $originalProject.Project.ItemGroup.Reference | Where-Object {
         ($_.HintPath -ne $null -and
          $_.HintPath -notlike "..\packages*") -or
-        ($_.HintPath -eq $null -and
-         $_.Include -notlike "System*")
+        ($_.HintPath -eq $null)
     }
     $itemGroup = $project.CreateElement("ItemGroup")
     $project.Project.AppendChild($itemGroup) | Out-Null
